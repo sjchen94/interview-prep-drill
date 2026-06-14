@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { EF_INIT, type CardState } from './sm2.js';
+import { EF_INIT, type CardState } from './sm2';
 
 export const DEFAULT_DB_PATH = join(
   homedir(),
@@ -12,7 +12,36 @@ export const DEFAULT_DB_PATH = join(
   'cards.db',
 );
 
-export type Deck = 'blind75' | 'sysdesign';
+export type Deck = 'blind75' | 'sysdesign' | 'behavioral';
+
+/**
+ * Derive a topic tag from a card's source_path.
+ * Returns a short slug (e.g. "arrays", "trees", "caching") or null.
+ */
+export function topicFromSourcePath(sourcePath: string): string | null {
+  const p = sourcePath.toLowerCase();
+  // blind75 sub-topics
+  if (p.includes('/arrays/') || p.includes('/array/')) return 'arrays';
+  if (p.includes('/strings/') || p.includes('/string/')) return 'strings';
+  if (p.includes('/trees/') || p.includes('/tree/')) return 'trees';
+  if (p.includes('/graphs/') || p.includes('/graph/')) return 'graphs';
+  if (p.includes('/dp/') || p.includes('/dynamic-programming/')) return 'dp';
+  if (p.includes('/linked-list/') || p.includes('/linked_list/')) return 'linked-list';
+  if (p.includes('/binary-search/')) return 'binary-search';
+  if (p.includes('/heap/')) return 'heap';
+  if (p.includes('/trie/')) return 'trie';
+  if (p.includes('/backtracking/')) return 'backtracking';
+  // sysdesign sub-topics
+  if (p.includes('storage') || p.includes('key-value') || p.includes('database')) return 'storage';
+  if (p.includes('messaging') || p.includes('notification') || p.includes('queue')) return 'messaging';
+  if (p.includes('caching') || p.includes('cache') || p.includes('cdn')) return 'caching';
+  if (p.includes('load-balanc') || p.includes('rate-limit') || p.includes('crawler')) return 'load-balancing';
+  if (p.includes('chat') || p.includes('feed') || p.includes('twitter') || p.includes('social')) return 'social-feed';
+  if (p.includes('ride') || p.includes('autocomplete') || p.includes('search')) return 'search';
+  // behavioral
+  if (p.includes('behavioral') || p.includes('star')) return 'behavioral';
+  return null;
+}
 
 export interface CardRow {
   id: string;
@@ -21,6 +50,7 @@ export interface CardRow {
   title: string;
   body_md: string;
   created_at: number;
+  topic: string | null;
 }
 
 export interface CardStateRow {
@@ -104,6 +134,30 @@ function applySchema(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_reviews_card_id ON reviews(card_id);
   `);
+
+  // Migration: add topic column if it doesn't exist yet (safe to run repeatedly)
+  const cols = db
+    .prepare(`PRAGMA table_info(cards)`)
+    .all() as Array<{ name: string }>;
+  const hasTopicCol = cols.some((c) => c.name === 'topic');
+  if (!hasTopicCol) {
+    db.exec(`ALTER TABLE cards ADD COLUMN topic TEXT`);
+  }
+
+  // Backfill topic for any rows that are still NULL
+  const nullTopicRows = db
+    .prepare(`SELECT id, source_path FROM cards WHERE topic IS NULL`)
+    .all() as Array<{ id: string; source_path: string }>;
+  if (nullTopicRows.length > 0) {
+    const updateTopic = db.prepare(`UPDATE cards SET topic = ? WHERE id = ?`);
+    const backfill = db.transaction(() => {
+      for (const row of nullTopicRows) {
+        const topic = topicFromSourcePath(row.source_path);
+        if (topic !== null) updateTopic.run(topic, row.id);
+      }
+    });
+    backfill();
+  }
 }
 
 export interface UpsertCardInput {
@@ -113,6 +167,7 @@ export interface UpsertCardInput {
   title: string;
   body_md: string;
   created_at?: number;
+  topic?: string | null;
 }
 
 /**
@@ -124,11 +179,12 @@ export function upsertCard(
   input: UpsertCardInput,
 ): boolean {
   const created_at = input.created_at ?? Date.now();
+  const topic = input.topic !== undefined ? input.topic : topicFromSourcePath(input.source_path);
   const stmt = db.prepare(`
-    INSERT OR IGNORE INTO cards (id, deck, source_path, title, body_md, created_at)
-    VALUES (@id, @deck, @source_path, @title, @body_md, @created_at)
+    INSERT OR IGNORE INTO cards (id, deck, source_path, title, body_md, created_at, topic)
+    VALUES (@id, @deck, @source_path, @title, @body_md, @created_at, @topic)
   `);
-  const info = stmt.run({ ...input, created_at });
+  const info = stmt.run({ ...input, created_at, topic });
   return info.changes === 1;
 }
 
