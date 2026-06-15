@@ -48,8 +48,11 @@ export function initialState(now: number = Date.now()): CardState {
 
 function updateEf(prevEf: number, q: number): number {
   const delta = 0.1 - (5 - q) * (0.08 + (5 - q) * 0.02);
-  const next = prevEf + delta;
-  return next < EF_FLOOR ? EF_FLOOR : next;
+  // Mean reversion: pull EF slightly toward 2.5 to prevent ease-hell
+  // (cards stuck at very low or very high EF after many reviews)
+  const raw = prevEf + delta;
+  const reverted = raw * 0.85 + EF_INIT * 0.15;
+  return reverted < EF_FLOOR ? EF_FLOOR : reverted;
 }
 
 export function review(

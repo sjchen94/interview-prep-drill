@@ -31,11 +31,12 @@ describe('SM-2 first review', () => {
     expect(next.last_reviewed_at_ms).toBe(NOW);
   });
 
-  it('q=5 on a new card schedules in 1 day and bumps EF by 0.1', () => {
+  it('q=5 on a new card schedules in 1 day and bumps EF (with mean reversion toward 2.5)', () => {
     const next = review(initialState(NOW), 5, NOW);
     expect(next.reps).toBe(1);
     expect(next.interval).toBe(1);
-    expect(next.ef).toBeCloseTo(2.6, 10);
+    // raw EF would be 2.6; after mean reversion: 2.6*0.85 + 2.5*0.15 = 2.585
+    expect(next.ef).toBeCloseTo(2.585, 10);
   });
 
   it('second successful review (reps was 1) jumps to 6 days', () => {
@@ -48,14 +49,15 @@ describe('SM-2 first review', () => {
 
   it('third+ successful review multiplies prev interval by current EF', () => {
     let s: CardState = initialState(NOW);
-    s = review(s, 5, NOW);                 // reps 0 -> 1, interval 1, EF 2.6
-    s = review(s, 5, NOW + DAY_MS);        // reps 1 -> 2, interval 6, EF 2.7
+    s = review(s, 5, NOW);                 // reps 0 -> 1, interval 1, EF 2.585 (mean-reverted)
+    s = review(s, 5, NOW + DAY_MS);        // reps 1 -> 2, interval 6, EF 2.65725
     const before = s;
-    s = review(s, 5, NOW + 7 * DAY_MS);    // reps 2 -> 3, interval round(6*2.8)=17
-    expect(before.ef).toBeCloseTo(2.7, 10);
-    expect(s.ef).toBeCloseTo(2.8, 10);
+    s = review(s, 5, NOW + 7 * DAY_MS);    // reps 2 -> 3, interval round(6*ef3)=16
+    // With mean reversion: EF values are pulled toward 2.5 each step
+    expect(before.ef).toBeCloseTo(2.65725, 10);
+    expect(s.ef).toBeCloseTo(2.7186625, 10);
     expect(s.reps).toBe(3);
-    expect(s.interval).toBe(Math.round(6 * 2.8));
+    expect(s.interval).toBe(Math.round(6 * s.ef));
   });
 });
 
@@ -69,8 +71,10 @@ describe('SM-2 lapses (q < 3)', () => {
     const lapsed = review(s, 2, NOW + 7 * DAY_MS);
     expect(lapsed.reps).toBe(0);
     expect(lapsed.interval).toBe(1);
-    // EF update for q=2: delta = 0.1 - 3*(0.08 + 3*0.02) = -0.32
-    expect(lapsed.ef).toBeCloseTo(beforeLapse.ef - 0.32, 10);
+    // EF update for q=2 with mean reversion:
+    // raw = beforeLapse.ef - 0.32; reverted = raw * 0.85 + 2.5 * 0.15
+    const rawLapsed = beforeLapse.ef - 0.32;
+    expect(lapsed.ef).toBeCloseTo(rawLapsed * 0.85 + 2.5 * 0.15, 10);
     expect(lapsed.due_at_ms).toBe(NOW + 7 * DAY_MS + DAY_MS);
   });
 
@@ -79,9 +83,8 @@ describe('SM-2 lapses (q < 3)', () => {
     const next = review(s, 0, NOW);
     expect(next.reps).toBe(0);
     expect(next.interval).toBe(1);
-    // delta for q=0: 0.1 - 5*(0.08 + 5*0.02) = 0.1 - 5*0.18 = -0.8
-    // 2.5 - 0.8 = 1.7
-    expect(next.ef).toBeCloseTo(1.7, 10);
+    // delta for q=0: -0.8 => raw = 1.7; with mean reversion: 1.7*0.85 + 2.5*0.15 = 1.82
+    expect(next.ef).toBeCloseTo(1.82, 10);
   });
 
   it('q=3 still passes (reps increments) but EF dips slightly', () => {
@@ -89,8 +92,8 @@ describe('SM-2 lapses (q < 3)', () => {
     const next = review(s, 3, NOW);
     expect(next.reps).toBe(1);
     expect(next.interval).toBe(1);
-    // delta for q=3: 0.1 - 2*(0.08 + 2*0.02) = -0.14
-    expect(next.ef).toBeCloseTo(2.36, 10);
+    // delta for q=3: -0.14 => raw = 2.36; with mean reversion: 2.36*0.85 + 2.5*0.15 = 2.381
+    expect(next.ef).toBeCloseTo(2.381, 10);
   });
 });
 
