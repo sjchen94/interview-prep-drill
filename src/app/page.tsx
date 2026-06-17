@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import AnalyticsPanel from "@/components/AnalyticsPanel";
 import CardBody from "@/components/CardBody";
 import DeckBadge from "@/components/DeckBadge";
 import GradeButtons from "@/components/GradeButtons";
@@ -42,6 +43,14 @@ interface Stats {
 
 type Phase = "question" | "answer" | "grading" | "done";
 type DeckFilter = "all" | "blind75" | "sysdesign";
+type TimedMode = 0 | 30 | 60 | 90; // 0 = stopwatch (off)
+
+const TIMED_MODE_LABELS: Record<TimedMode, string> = {
+  0: "∞",
+  30: "0:30",
+  60: "1:00",
+  90: "1:30",
+};
 
 const DECK_LABELS: Record<DeckFilter, string> = {
   all: "All",
@@ -59,6 +68,11 @@ export default function DrillPage() {
   const [submitting, setSubmitting] = useState(false);
   const [lastGrade, setLastGrade] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+
+  // Timed drill mode (countdown per card, 0 = stopwatch)
+  const [timedMode, setTimedMode] = useState<TimedMode>(0);
+  // True when the countdown expired and auto-revealed this card
+  const [timedOut, setTimedOut] = useState(false);
 
   // Deck filter
   const [deckFilter, setDeckFilter] = useState<DeckFilter>("all");
@@ -92,6 +106,7 @@ export default function DrillPage() {
     setFeedback(null);
     setTimerRunning(false);
     setTimerResetKey((k) => k + 1);
+    setTimedOut(false);
 
     const deck = deckFilterRef.current;
     const deckParam = deck !== "all" ? `?deck=${deck}` : "";
@@ -255,7 +270,17 @@ export default function DrillPage() {
                 Browse
               </Link>
             </nav>
-            <Timer running={timerRunning} onReset={timerResetKey as unknown as undefined} />
+            <Timer
+              running={timerRunning}
+              onReset={timerResetKey}
+              countdownSeconds={timedMode > 0 ? timedMode : undefined}
+              onExpire={() => {
+                if (phase === "question") {
+                  setTimedOut(true);
+                  handleReveal();
+                }
+              }}
+            />
           </div>
         </div>
       </header>
@@ -267,8 +292,9 @@ export default function DrillPage() {
       <main className="flex-1 overflow-y-auto scroll-area">
         <div className="max-w-2xl mx-auto px-4 py-4 pb-8 space-y-4">
 
-          {/* ——— Deck filter tabs ——— */}
-          <div className="flex gap-2 flex-wrap">
+          {/* ——— Deck filter tabs + Timed Mode toggle ——— */}
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex gap-2 flex-wrap">
             {(["all", "blind75", "sysdesign"] as DeckFilter[]).map((d) => {
               const ds = deckStats(d);
               const active = deckFilter === d;
@@ -299,6 +325,26 @@ export default function DrillPage() {
                 </button>
               );
             })}
+            </div>
+
+            {/* Timed mode picker */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="text-xs text-slate-500 hidden sm:block">Timer:</span>
+              {([0, 30, 60, 90] as TimedMode[]).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTimedMode(t)}
+                  title={t === 0 ? "Stopwatch (no limit)" : `${t}s countdown`}
+                  className={`px-2 py-1 rounded-lg text-xs font-medium transition-colors ${
+                    timedMode === t
+                      ? "bg-brand text-white"
+                      : "bg-surface-card text-slate-400 hover:text-slate-200 border border-surface-border"
+                  }`}
+                >
+                  {TIMED_MODE_LABELS[t]}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* ——— History navigation banner ——— */}
@@ -325,6 +371,9 @@ export default function DrillPage() {
 
           {/* ——— Weak spots (hidden while browsing history) ——— */}
           {!isBrowsingHistory && <WeakSpotsPanel />}
+
+          {/* ——— Analytics (hidden while browsing history) ——— */}
+          {!isBrowsingHistory && <AnalyticsPanel />}
 
           {/* ——— All done state ——— */}
           {!isBrowsingHistory && phase === "done" && !activeCard && (
@@ -383,6 +432,11 @@ export default function DrillPage() {
                   {activeCard.audit && (
                     <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-grade-easy/20 text-grade-easy border border-grade-easy/40">
                       Retention Audit
+                    </span>
+                  )}
+                  {timedOut && (
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-grade-again/20 text-grade-again border border-grade-again/40">
+                      Time&apos;s Up
                     </span>
                   )}
                   <span className="text-xs text-slate-500 ml-auto">
