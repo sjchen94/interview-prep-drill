@@ -12,7 +12,7 @@ export const DEFAULT_DB_PATH = join(
   'cards.db',
 );
 
-export type Deck = 'blind75' | 'sysdesign' | 'behavioral';
+export type Deck = 'blind75' | 'sysdesign' | 'behavioral' | 'ml-infra';
 
 /**
  * Derive a topic tag from a card's source_path.
@@ -40,6 +40,15 @@ export function topicFromSourcePath(sourcePath: string): string | null {
   if (p.includes('ride') || p.includes('autocomplete') || p.includes('search')) return 'search';
   // behavioral
   if (p.includes('behavioral') || p.includes('star')) return 'behavioral';
+  // ml-infra sub-topics
+  if (p.includes('feature-store') || p.includes('feature_store')) return 'feature-stores';
+  if (p.includes('model-serving') || p.includes('model_serving') || p.includes('inference')) return 'model-serving';
+  if (p.includes('vector-db') || p.includes('vector_db') || p.includes('vector-search')) return 'vector-dbs';
+  if (p.includes('/rag/') || p.includes('retrieval-augmented') || p.includes('retrieval_augmented')) return 'rag';
+  if (p.includes('llm-infra') || p.includes('llm_infra') || p.includes('llm-scale') || p.includes('llm-inference')) return 'llm-infra';
+  if (p.includes('ml-pipeline') || p.includes('ml_pipeline') || p.includes('training-infra') || p.includes('training_infra')) return 'ml-pipelines';
+  if (p.includes('ml-monitoring') || p.includes('model-monitoring') || p.includes('ml-observability')) return 'ml-monitoring';
+  if (p.includes('ml-infra') || p.includes('ml_infra')) return 'ml-infra';
   return null;
 }
 

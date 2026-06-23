@@ -68,6 +68,8 @@ export default function DrillPage() {
   const [submitting, setSubmitting] = useState(false);
   const [lastGrade, setLastGrade] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  // Response textarea — user types their answer; passed to AI grader
+  const [responseMd, setResponseMd] = useState<string>("");
 
   // Timed drill mode (countdown per card, 0 = stopwatch)
   const [timedMode, setTimedMode] = useState<TimedMode>(0);
@@ -104,6 +106,7 @@ export default function DrillPage() {
     setPhase("question");
     setLastGrade(null);
     setFeedback(null);
+    setResponseMd("");
     setTimerRunning(false);
     setTimerResetKey((k) => k + 1);
     setTimedOut(false);
@@ -166,7 +169,11 @@ export default function DrillPage() {
       const res = await fetch("/api/drill/grade", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ card_id: drillState.card.id, quality }),
+        body: JSON.stringify({
+          card_id: drillState.card.id,
+          quality,
+          response_md: responseMd.trim() || null,
+        }),
       });
       const data = (await res.json()) as {
         nextState?: { interval: number };
@@ -465,12 +472,40 @@ export default function DrillPage() {
                 )}
               </div>
 
-              {/* Grade buttons */}
+              {/* Response textarea + grade buttons */}
               {(phase === "answer" || phase === "grading") && (
-                <div className="bg-surface-card border border-surface-border rounded-2xl p-4 sm:p-6">
+                <div className="bg-surface-card border border-surface-border rounded-2xl p-4 sm:p-6 space-y-3">
+                  {phase === "answer" && (
+                    <div className="space-y-1.5">
+                      <label
+                        htmlFor="response-textarea"
+                        className="text-xs font-medium text-slate-400"
+                      >
+                        Your answer{" "}
+                        <span className="text-slate-600 font-normal">(optional — enables AI grading)</span>
+                      </label>
+                      <textarea
+                        id="response-textarea"
+                        value={responseMd}
+                        onChange={(e) => setResponseMd(e.target.value)}
+                        placeholder="Summarise your approach…"
+                        rows={3}
+                        className="
+                          w-full resize-y rounded-xl px-3 py-2
+                          min-h-[72px] max-h-48
+                          bg-surface border border-surface-border
+                          text-sm text-slate-200 placeholder-slate-500
+                          focus:outline-none focus:border-brand/60
+                          transition-colors
+                        "
+                      />
+                    </div>
+                  )}
                   <GradeButtons
                     onGrade={handleGrade}
                     disabled={submitting || phase === "grading"}
+                    cardId={activeCard.id}
+                    responseMd={responseMd}
                   />
                 </div>
               )}
