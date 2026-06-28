@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 
 const MASTERED_EASY_THRESHOLD = 3;
 const AUDIT_CHANCE = 0.10;
-const VALID_DECKS = new Set(["blind75", "sysdesign"]);
+const VALID_DECKS = new Set(["blind75", "sysdesign", "behavioral", "ml-infra"]);
 
 type CardRow = {
   id: string;
@@ -24,6 +24,8 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const rawDeck = searchParams.get("deck") ?? "all";
     const deck = VALID_DECKS.has(rawDeck) ? rawDeck : null; // null = all decks
+    // focus=hard: sort by ef ASC (hardest/lowest EF first) instead of due_at ASC
+    const focusHard = searchParams.get("focus") === "hard";
 
     const db = openDb();
     const now = Date.now();
@@ -46,8 +48,8 @@ export async function GET(request: Request) {
           .get(...(deck ? [deck] : [])) as { n: number }
       ).n;
 
-    // Mastered-card audit: 10% chance to resurface a well-known card
-    if (Math.random() < AUDIT_CHANCE) {
+    // Skip audit in focus-hard mode — we want deliberate practice, not random mastery checks
+    if (!focusHard && Math.random() < AUDIT_CHANCE) {
       const masteredRow = db
         .prepare(
           `SELECT c.id, c.deck, c.title, c.body_md,
@@ -73,7 +75,10 @@ export async function GET(request: Request) {
       }
     }
 
-    // Normal: pick earliest due card
+    // Order: focus-hard sorts lowest EF first (cards you struggle most with);
+    // normal sorts by earliest due_at (canonical SM-2 order).
+    const orderClause = focusHard ? "cs.ef ASC, cs.due_at ASC" : "cs.due_at ASC";
+
     const row = db
       .prepare(
         `SELECT c.id, c.deck, c.title, c.body_md,
@@ -81,7 +86,7 @@ export async function GET(request: Request) {
          FROM cards c
          JOIN card_state cs ON cs.card_id = c.id
          WHERE cs.due_at <= ? ${deckClause}
-         ORDER BY cs.due_at ASC
+         ORDER BY ${orderClause}
          LIMIT 1`,
       )
       .get(...withDeck([now])) as CardRow | undefined;

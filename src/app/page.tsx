@@ -42,7 +42,7 @@ interface Stats {
 }
 
 type Phase = "question" | "answer" | "grading" | "done";
-type DeckFilter = "all" | "blind75" | "sysdesign";
+type DeckFilter = "all" | "blind75" | "sysdesign" | "behavioral" | "ml-infra";
 type TimedMode = 0 | 30 | 60 | 90; // 0 = stopwatch (off)
 
 const TIMED_MODE_LABELS: Record<TimedMode, string> = {
@@ -55,7 +55,9 @@ const TIMED_MODE_LABELS: Record<TimedMode, string> = {
 const DECK_LABELS: Record<DeckFilter, string> = {
   all: "All",
   blind75: "Blind 75",
-  sysdesign: "System Design",
+  sysdesign: "Sys Design",
+  behavioral: "Behavioral",
+  "ml-infra": "ML Infra",
 };
 
 export default function DrillPage() {
@@ -66,7 +68,7 @@ export default function DrillPage() {
   const [timerResetKey, setTimerResetKey] = useState(0);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [lastGrade, setLastGrade] = useState<string | null>(null);
+  const [, setLastGrade] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   // Response textarea — user types their answer; passed to AI grader
   const [responseMd, setResponseMd] = useState<string>("");
@@ -79,6 +81,10 @@ export default function DrillPage() {
   // Deck filter
   const [deckFilter, setDeckFilter] = useState<DeckFilter>("all");
   const deckFilterRef = useRef<DeckFilter>("all");
+
+  // Focus mode: hard-first queues lowest-EF due cards first
+  const [focusHard, setFocusHard] = useState(false);
+  const focusHardRef = useRef(false);
 
   // Session history for prev/next navigation
   const sessionCardsRef = useRef<Card[]>([]);
@@ -112,7 +118,11 @@ export default function DrillPage() {
     setTimedOut(false);
 
     const deck = deckFilterRef.current;
-    const deckParam = deck !== "all" ? `?deck=${deck}` : "";
+    const focus = focusHardRef.current;
+    const params = new URLSearchParams();
+    if (deck !== "all") params.set("deck", deck);
+    if (focus) params.set("focus", "hard");
+    const deckParam = params.toString() ? `?${params.toString()}` : "";
 
     try {
       const [drillRes, statsRes] = await Promise.all([
@@ -143,14 +153,15 @@ export default function DrillPage() {
     }
   }, []);
 
-  // Fetch on mount and whenever deck changes (resets session history)
+  // Fetch on mount and whenever deck or focus mode changes (resets session history)
   useEffect(() => {
     deckFilterRef.current = deckFilter;
+    focusHardRef.current = focusHard;
     sessionCardsRef.current = [];
     setSessionCount(0);
     setHistoryPos(-1);
     fetchNext();
-  }, [deckFilter, fetchNext]);
+  }, [deckFilter, focusHard, fetchNext]);
 
   const handleReveal = () => {
     setPhase("answer");
@@ -165,6 +176,7 @@ export default function DrillPage() {
     setSubmitting(true);
     setPhase("grading");
     setLastGrade(label);
+
     try {
       const res = await fetch("/api/drill/grade", {
         method: "POST",
@@ -217,7 +229,6 @@ export default function DrillPage() {
   }
 
   const activeCard = isBrowsingHistory ? null : (drillState?.card ?? null);
-  const displayCard = browseCard ?? activeCard;
 
   const dueCount = deckStats(deckFilter).due;
   const totalCards = deckStats(deckFilter).total;
@@ -299,10 +310,9 @@ export default function DrillPage() {
       <main className="flex-1 overflow-y-auto scroll-area">
         <div className="max-w-2xl mx-auto px-4 py-4 pb-8 space-y-4">
 
-          {/* ——— Deck filter tabs + Timed Mode toggle ——— */}
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <div className="flex gap-2 flex-wrap">
-            {(["all", "blind75", "sysdesign"] as DeckFilter[]).map((d) => {
+          {/* ——— Deck filter tabs ——— */}
+          <div className="flex gap-2 flex-wrap">
+            {(["all", "blind75", "sysdesign", "behavioral", "ml-infra"] as DeckFilter[]).map((d) => {
               const ds = deckStats(d);
               const active = deckFilter === d;
               return (
@@ -332,11 +342,13 @@ export default function DrillPage() {
                 </button>
               );
             })}
-            </div>
+          </div>
 
+          {/* ——— Timed Mode + Focus Mode toggles ——— */}
+          <div className="flex items-center justify-between gap-3 flex-wrap">
             {/* Timed mode picker */}
-            <div className="flex items-center gap-1.5 shrink-0">
-              <span className="text-xs text-slate-500 hidden sm:block">Timer:</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-slate-500">Timer:</span>
               {([0, 30, 60, 90] as TimedMode[]).map((t) => (
                 <button
                   key={t}
@@ -352,6 +364,20 @@ export default function DrillPage() {
                 </button>
               ))}
             </div>
+
+            {/* Focus mode toggle */}
+            <button
+              onClick={() => setFocusHard((f) => !f)}
+              title={focusHard ? "Disable focus mode — return to earliest-due order" : "Focus mode: drill hardest cards (lowest EF) first"}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                focusHard
+                  ? "bg-grade-again/20 border-grade-again/60 text-grade-again"
+                  : "bg-surface-card border-surface-border text-slate-500 hover:text-slate-200"
+              }`}
+            >
+              <span aria-hidden="true">{focusHard ? "◉" : "○"}</span>
+              Focus: Hard
+            </button>
           </div>
 
           {/* ——— History navigation banner ——— */}
@@ -484,15 +510,42 @@ export default function DrillPage() {
                         Your answer{" "}
                         <span className="text-slate-600 font-normal">(optional — enables AI grading)</span>
                       </label>
+
+                      {/* STAR scaffold hint for behavioral cards */}
+                      {activeCard.deck === "behavioral" && (
+                        <div className="grid grid-cols-2 gap-1.5 mb-2">
+                          {(["Situation", "Task", "Action", "Result"] as const).map((part) => (
+                            <button
+                              key={part}
+                              type="button"
+                              onClick={() =>
+                                setResponseMd((prev) => {
+                                  const prefix = `${part}: `;
+                                  if (prev.includes(prefix)) return prev;
+                                  return prev ? `${prev}\n\n${prefix}` : prefix;
+                                })
+                              }
+                              className="text-left px-2.5 py-1.5 rounded-lg border border-surface-border bg-surface text-xs text-slate-400 hover:text-slate-100 hover:border-brand/50 transition-colors"
+                            >
+                              + {part}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
                       <textarea
                         id="response-textarea"
                         value={responseMd}
                         onChange={(e) => setResponseMd(e.target.value)}
-                        placeholder="Summarise your approach…"
-                        rows={3}
+                        placeholder={
+                          activeCard.deck === "behavioral"
+                            ? "Situation: …\nTask: …\nAction: …\nResult: …"
+                            : "Summarise your approach…"
+                        }
+                        rows={activeCard.deck === "behavioral" ? 6 : 3}
                         className="
                           w-full resize-y rounded-xl px-3 py-2
-                          min-h-[72px] max-h-48
+                          min-h-[72px] max-h-64
                           bg-surface border border-surface-border
                           text-sm text-slate-200 placeholder-slate-500
                           focus:outline-none focus:border-brand/60
@@ -506,6 +559,7 @@ export default function DrillPage() {
                     disabled={submitting || phase === "grading"}
                     cardId={activeCard.id}
                     responseMd={responseMd}
+                    isBehavioral={activeCard.deck === "behavioral"}
                   />
                 </div>
               )}
