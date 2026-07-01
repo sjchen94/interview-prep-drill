@@ -65,6 +65,8 @@ interface GradeButtonsProps {
   responseMd?: string;
   /** Whether this is a behavioral card (enables STAR feedback display). */
   isBehavioral?: boolean;
+  /** Number of graduated-disclosure hints used before answering (caps AI grade at Good if >= 2). */
+  hintsUsed?: number;
 }
 
 export default function GradeButtons({
@@ -73,6 +75,7 @@ export default function GradeButtons({
   cardId,
   responseMd,
   isBehavioral,
+  hintsUsed = 0,
 }: GradeButtonsProps) {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState<{
@@ -80,6 +83,7 @@ export default function GradeButtons({
     gaps: string[];
     suggested: Grade;
     starFeedback?: StarFeedback | null;
+    hintCapped?: boolean;
   } | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
 
@@ -95,12 +99,13 @@ export default function GradeButtons({
       const res = await fetch("/api/drill/ai-grade", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ card_id: cardId, response_md: responseMd }),
+        body: JSON.stringify({ card_id: cardId, response_md: responseMd, hints_used: hintsUsed }),
       });
       const data = (await res.json()) as {
         quality?: number;
         gaps?: string[];
         starFeedback?: StarFeedback | null;
+        hintCapped?: boolean;
         error?: string;
       };
       if (data.error || data.quality === undefined) {
@@ -112,6 +117,7 @@ export default function GradeButtons({
           gaps: data.gaps ?? [],
           suggested,
           starFeedback: data.starFeedback ?? null,
+          hintCapped: data.hintCapped ?? false,
         });
       }
     } catch (e) {
@@ -167,6 +173,11 @@ export default function GradeButtons({
               <span className="ml-1 text-slate-500 font-normal">
                 ({aiResult.quality}/5)
               </span>
+              {aiResult.hintCapped && (
+                <span className="ml-1.5 text-xs text-slate-500 font-normal italic">
+                  (capped — hints used)
+                </span>
+              )}
             </span>
             <button
               onClick={() => onGrade(aiResult.suggested.quality, aiResult.suggested.label)}

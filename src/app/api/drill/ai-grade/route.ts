@@ -43,9 +43,10 @@ export async function POST(req: NextRequest) {
     const body = (await req.json()) as {
       card_id: string;
       response_md: string;
+      hints_used?: number;
     };
 
-    const { card_id, response_md } = body;
+    const { card_id, response_md, hints_used } = body;
 
     if (!card_id || !response_md || !response_md.trim()) {
       return NextResponse.json(
@@ -105,7 +106,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    return NextResponse.json({ quality, gaps, starFeedback });
+    // Graduated disclosure: if the user pulled 2+ hints before answering,
+    // cap the AI-suggested grade at "Good" (quality 3) — relying on hints
+    // means it wasn't a clean, unaided recall.
+    const hintsUsedNum = typeof hints_used === "number" ? hints_used : 0;
+    let hintCapped = false;
+    if (hintsUsedNum >= 2 && quality > 3) {
+      quality = 3;
+      hintCapped = true;
+      gaps = [...gaps, `Grade capped at Good — ${hintsUsedNum} hints used before answering.`].slice(0, 3);
+    }
+
+    return NextResponse.json({ quality, gaps, starFeedback, hintCapped });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: message }, { status: 500 });

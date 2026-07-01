@@ -153,6 +153,15 @@ function applySchema(db: Database.Database): void {
     db.exec(`ALTER TABLE cards ADD COLUMN topic TEXT`);
   }
 
+  // Migration: add hints_used column to reviews (tracks graduated-disclosure hint usage)
+  const reviewCols = db
+    .prepare(`PRAGMA table_info(reviews)`)
+    .all() as Array<{ name: string }>;
+  const hasHintsUsedCol = reviewCols.some((c) => c.name === 'hints_used');
+  if (!hasHintsUsedCol) {
+    db.exec(`ALTER TABLE reviews ADD COLUMN hints_used INTEGER NOT NULL DEFAULT 0`);
+  }
+
   // Backfill topic for any rows that are still NULL
   const nullTopicRows = db
     .prepare(`SELECT id, source_path FROM cards WHERE topic IS NULL`)
@@ -256,6 +265,7 @@ export interface RecordReviewInput {
   answered_at?: number;
   response_md?: string | null;
   grade_notes?: string | null;
+  hints_used?: number;
 }
 
 export function recordReview(
@@ -264,14 +274,15 @@ export function recordReview(
 ): number {
   const answered_at = input.answered_at ?? Date.now();
   const info = db.prepare(`
-    INSERT INTO reviews (card_id, quality, answered_at, response_md, grade_notes)
-    VALUES (@card_id, @quality, @answered_at, @response_md, @grade_notes)
+    INSERT INTO reviews (card_id, quality, answered_at, response_md, grade_notes, hints_used)
+    VALUES (@card_id, @quality, @answered_at, @response_md, @grade_notes, @hints_used)
   `).run({
     card_id: input.card_id,
     quality: input.quality,
     answered_at,
     response_md: input.response_md ?? null,
     grade_notes: input.grade_notes ?? null,
+    hints_used: input.hints_used ?? 0,
   });
   return Number(info.lastInsertRowid);
 }

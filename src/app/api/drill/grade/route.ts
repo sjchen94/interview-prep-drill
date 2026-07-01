@@ -8,9 +8,10 @@ export async function POST(req: NextRequest) {
       card_id: string;
       quality: number;
       response_md?: string;
+      hints_used?: number;
     };
 
-    const { card_id, quality, response_md } = body;
+    const { card_id, quality, response_md, hints_used } = body;
 
     if (!card_id || quality === undefined) {
       return NextResponse.json(
@@ -46,6 +47,7 @@ export async function POST(req: NextRequest) {
       card_id,
       quality,
       response_md: response_md ?? null,
+      hints_used: typeof hints_used === "number" ? hints_used : 0,
     });
 
     return NextResponse.json({

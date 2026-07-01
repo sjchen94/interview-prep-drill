@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import AnalyticsPanel from "@/components/AnalyticsPanel";
-import CardBody from "@/components/CardBody";
+import CardBody, { countHintSteps } from "@/components/CardBody";
 import DeckBadge from "@/components/DeckBadge";
 import GradeButtons from "@/components/GradeButtons";
 import PeerPanel from "@/components/PeerPanel";
@@ -82,6 +82,10 @@ export default function DrillPage() {
   // Response textarea — user types their answer; passed to AI grader
   const [responseMd, setResponseMd] = useState<string>("");
 
+  // Graduated disclosure: 0 = nothing revealed, 1..N = hint N shown, N+1 = full answer.
+  // Reset to 0 whenever a new card loads.
+  const [hintStep, setHintStep] = useState(0);
+
   // Timed drill mode (countdown per card, 0 = stopwatch)
   const [timedMode, setTimedMode] = useState<TimedMode>(0);
   // True when the countdown expired and auto-revealed this card
@@ -94,6 +98,10 @@ export default function DrillPage() {
   // Focus mode: hard-first queues lowest-EF due cards first
   const [focusHard, setFocusHard] = useState(false);
   const focusHardRef = useRef(false);
+
+  // Interleave mode: round-robin due cards by topic to avoid consecutive same-topic cards
+  const [interleave, setInterleave] = useState(false);
+  const interleaveRef = useRef(false);
 
   // Session history for prev/next navigation
   const sessionCardsRef = useRef<Card[]>([]);
@@ -138,12 +146,15 @@ export default function DrillPage() {
     setTimerRunning(false);
     setTimerResetKey((k) => k + 1);
     setTimedOut(false);
+    setHintStep(0);
 
     const deck = deckFilterRef.current;
     const focus = focusHardRef.current;
+    const interleaveOn = interleaveRef.current;
     const params = new URLSearchParams();
     if (deck !== "all") params.set("deck", deck);
     if (focus) params.set("focus", "hard");
+    if (interleaveOn) params.set("strategy", "interleave");
     const deckParam = params.toString() ? `?${params.toString()}` : "";
 
     try {
@@ -175,20 +186,26 @@ export default function DrillPage() {
     }
   }, []);
 
-  // Fetch on mount and whenever deck or focus mode changes (resets session history)
+  // Fetch on mount and whenever deck, focus mode, or interleave mode changes (resets session history)
   useEffect(() => {
     deckFilterRef.current = deckFilter;
     focusHardRef.current = focusHard;
+    interleaveRef.current = interleave;
     sessionCardsRef.current = [];
     setSessionCount(0);
     setHistoryPos(-1);
     setSessionGrades([]);
     fetchNext();
-  }, [deckFilter, focusHard, fetchNext]);
+  }, [deckFilter, focusHard, interleave, fetchNext]);
+
+  // Number of progressive hint steps available for the active card (0 = none).
+  const activeHintSteps = drillState?.card ? countHintSteps(drillState.card.body_md) : 0;
 
   const handleReveal = () => {
     setPhase("answer");
     setTimerRunning(false);
+    // "Show Answer" jumps straight to the full reveal (skips hint steps).
+    setHintStep(activeHintSteps + 1);
     setTimeout(() => {
       cardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 100);
@@ -196,12 +213,25 @@ export default function DrillPage() {
   // Keep ref current so keyboard handler always calls the latest version
   handleRevealRef.current = handleReveal;
 
+  // "Hint (N remaining)" — advances one hint step at a time; entering the
+  // answer phase but capping at hints (not the full answer) until exhausted.
+  const handleHint = () => {
+    setPhase("answer");
+    setTimerRunning(false);
+    setHintStep((s) => Math.min(s + 1, activeHintSteps + 1));
+    setTimeout(() => {
+      cardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 100);
+  };
+
   const handleGrade = async (quality: number, label: string) => {
     if (!drillState?.card || submitting) return;
     setSubmitting(true);
     setPhase("grading");
     setLastGrade(label);
     setSessionGrades((prev) => [...prev, label]);
+    // Hints used = number of hint steps actually shown (excludes the final full-answer step).
+    const hintsUsed = Math.min(hintStep, activeHintSteps);
 
     try {
       const res = await fetch("/api/drill/grade", {
@@ -211,6 +241,7 @@ export default function DrillPage() {
           card_id: drillState.card.id,
           quality,
           response_md: responseMd.trim() || null,
+          hints_used: hintsUsed,
         }),
       });
       const data = (await res.json()) as {
@@ -440,18 +471,34 @@ export default function DrillPage() {
             </div>
 
             {/* Focus mode toggle */}
-            <button
-              onClick={() => setFocusHard((f) => !f)}
-              title={focusHard ? "Disable focus mode — return to earliest-due order" : "Focus mode: drill hardest cards (lowest EF) first"}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium border transition-colors ${
-                focusHard
-                  ? "bg-grade-again/20 border-grade-again/60 text-grade-again"
-                  : "bg-surface-card border-surface-border text-slate-500 hover:text-slate-200"
-              }`}
-            >
-              <span aria-hidden="true">{focusHard ? "◉" : "○"}</span>
-              Focus: Hard
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setFocusHard((f) => !f)}
+                title={focusHard ? "Disable focus mode — return to earliest-due order" : "Focus mode: drill hardest cards (lowest EF) first"}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                  focusHard
+                    ? "bg-grade-again/20 border-grade-again/60 text-grade-again"
+                    : "bg-surface-card border-surface-border text-slate-500 hover:text-slate-200"
+                }`}
+              >
+                <span aria-hidden="true">{focusHard ? "◉" : "○"}</span>
+                Focus: Hard
+              </button>
+
+              {/* Interleave mode toggle */}
+              <button
+                onClick={() => setInterleave((v) => !v)}
+                title={interleave ? "Disable interleaving — return to normal due order" : "Interleave mode: mix topics to avoid consecutive same-topic cards"}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                  interleave
+                    ? "bg-brand/20 border-brand/60 text-brand-light"
+                    : "bg-surface-card border-surface-border text-slate-500 hover:text-slate-200"
+                }`}
+              >
+                <span aria-hidden="true">{interleave ? "◉" : "○"}</span>
+                Interleave
+              </button>
+            </div>
           </div>
 
           {/* ——— History navigation banner ——— */}
@@ -556,10 +603,25 @@ export default function DrillPage() {
                   title={activeCard.title}
                   bodyMd={activeCard.body_md}
                   revealed={phase === "answer" || phase === "grading"}
+                  hintStep={hintStep}
                 />
 
                 {phase === "question" && (
                   <div className="space-y-1.5">
+                    {activeHintSteps > 0 && (
+                      <button
+                        onClick={handleHint}
+                        className="
+                          w-full min-h-[44px] rounded-xl
+                          bg-surface border border-brand/50 text-brand-light
+                          hover:bg-brand/10 active:scale-95
+                          font-medium text-sm
+                          transition-all duration-150 touch-manipulation
+                        "
+                      >
+                        Hint ({activeHintSteps} remaining)
+                      </button>
+                    )}
                     <button
                       onClick={handleReveal}
                       className="
@@ -575,6 +637,22 @@ export default function DrillPage() {
                       Press <kbd className="px-1 py-0.5 rounded bg-surface-border text-slate-400 font-mono text-xs">Space</kbd> to reveal
                     </p>
                   </div>
+                )}
+                {phase === "answer" && hintStep > 0 && hintStep <= activeHintSteps && (
+                  <button
+                    onClick={handleHint}
+                    className="
+                      w-full min-h-[40px] rounded-xl
+                      bg-surface border border-brand/50 text-brand-light
+                      hover:bg-brand/10 active:scale-95
+                      font-medium text-sm
+                      transition-all duration-150 touch-manipulation
+                    "
+                  >
+                    {hintStep < activeHintSteps
+                      ? `Next Hint (${activeHintSteps - hintStep} remaining)`
+                      : "Show Full Answer"}
+                  </button>
                 )}
               </div>
 
@@ -645,6 +723,7 @@ export default function DrillPage() {
                     cardId={activeCard.id}
                     responseMd={responseMd}
                     isBehavioral={activeCard.deck === "behavioral"}
+                    hintsUsed={Math.min(hintStep, activeHintSteps)}
                   />
                 </div>
               )}

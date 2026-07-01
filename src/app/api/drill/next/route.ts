@@ -17,7 +17,37 @@ type CardRow = {
   reps: number;
   due_at: number;
   last_reviewed_at: number | null;
+  topic?: string | null;
 };
+
+/**
+ * Round-robin shuffle a list of due cards by topic so consecutive cards
+ * rarely share the same topic. Cards with a null topic are treated as
+ * their own singleton bucket (deck name fallback), keyed by deck if no
+ * topic is set, so interleaving still works for untagged cards.
+ */
+function interleaveByTopic(rows: CardRow[]): CardRow[] {
+  const buckets = new Map<string, CardRow[]>();
+  for (const row of rows) {
+    const key = row.topic ?? `__deck:${row.deck}`;
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(row);
+    else buckets.set(key, [row]);
+  }
+  const queues = [...buckets.values()];
+  const result: CardRow[] = [];
+  let i = 0;
+  while (result.length < rows.length) {
+    const queue = queues[i % queues.length];
+    if (queue && queue.length > 0) {
+      result.push(queue.shift()!);
+    }
+    i++;
+    // Safety: if every queue is empty we're done (avoid infinite loop)
+    if (queues.every((q) => q.length === 0)) break;
+  }
+  return result;
+}
 
 export async function GET(request: Request) {
   try {
@@ -26,6 +56,8 @@ export async function GET(request: Request) {
     const deck = VALID_DECKS.has(rawDeck) ? rawDeck : null; // null = all decks
     // focus=hard: sort by ef ASC (hardest/lowest EF first) instead of due_at ASC
     const focusHard = searchParams.get("focus") === "hard";
+    // strategy=interleave: round-robin due cards by topic to avoid consecutive same-topic cards
+    const interleave = searchParams.get("strategy") === "interleave";
 
     const db = openDb();
     const now = Date.now();
@@ -79,17 +111,36 @@ export async function GET(request: Request) {
     // normal sorts by earliest due_at (canonical SM-2 order).
     const orderClause = focusHard ? "cs.ef ASC, cs.due_at ASC" : "cs.due_at ASC";
 
-    const row = db
-      .prepare(
-        `SELECT c.id, c.deck, c.title, c.body_md,
-                cs.ef, cs.interval, cs.reps, cs.due_at, cs.last_reviewed_at
-         FROM cards c
-         JOIN card_state cs ON cs.card_id = c.id
-         WHERE cs.due_at <= ? ${deckClause}
-         ORDER BY ${orderClause}
-         LIMIT 1`,
-      )
-      .get(...withDeck([now])) as CardRow | undefined;
+    let row: CardRow | undefined;
+    if (interleave) {
+      // Fetch top 10 due cards (by the normal ordering), round-robin shuffle
+      // by topic so consecutive same-topic cards are avoided, then serve
+      // the first card of the interleaved sequence.
+      const dueRows = db
+        .prepare(
+          `SELECT c.id, c.deck, c.title, c.body_md, c.topic,
+                  cs.ef, cs.interval, cs.reps, cs.due_at, cs.last_reviewed_at
+           FROM cards c
+           JOIN card_state cs ON cs.card_id = c.id
+           WHERE cs.due_at <= ? ${deckClause}
+           ORDER BY ${orderClause}
+           LIMIT 10`,
+        )
+        .all(...withDeck([now])) as CardRow[];
+      row = interleaveByTopic(dueRows)[0];
+    } else {
+      row = db
+        .prepare(
+          `SELECT c.id, c.deck, c.title, c.body_md,
+                  cs.ef, cs.interval, cs.reps, cs.due_at, cs.last_reviewed_at
+           FROM cards c
+           JOIN card_state cs ON cs.card_id = c.id
+           WHERE cs.due_at <= ? ${deckClause}
+           ORDER BY ${orderClause}
+           LIMIT 1`,
+        )
+        .get(...withDeck([now])) as CardRow | undefined;
+    }
 
     if (!row) {
       // No cards due — return next upcoming
