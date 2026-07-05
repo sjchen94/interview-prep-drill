@@ -20,6 +20,11 @@ interface TopicStat {
   avgInterval: number;
 }
 
+interface ForecastDay {
+  date: string; // ISO date "YYYY-MM-DD"
+  count: number;
+}
+
 export interface AnalyticsPayload {
   /** Daily review counts for last 14 days (oldest first) */
   dailyCounts: DailyCount[];
@@ -35,6 +40,8 @@ export interface AnalyticsPayload {
   totalReviews: number;
   /** Cards whose interval >= 21 days (well-learned) */
   masteredCount: number;
+  /** Forward-looking: how many cards become newly due each of the next 7 days */
+  forecast: ForecastDay[];
 }
 
 /**
@@ -203,6 +210,33 @@ export async function GET() {
       avgInterval: r.avgInterval,
     }));
 
+    // ——— 7-day forward forecast ———
+    // Buckets each card_state row's due_at into the local calendar day it
+    // falls on, for the next 7 days (today through today+6). Cards already
+    // overdue (due_at <= now) all land in "today" so the count reflects
+    // real study load, not just newly-due cards.
+    const now = Date.now();
+    const sevenDaysAhead = now + 7 * 24 * 60 * 60 * 1000;
+    const upcomingDue = db
+      .prepare(
+        `SELECT due_at FROM card_state WHERE due_at <= ?`,
+      )
+      .all(sevenDaysAhead) as Array<{ due_at: number }>;
+
+    const forecastMap = new Map<string, number>();
+    for (const { due_at } of upcomingDue) {
+      const effective = Math.max(due_at, now); // overdue cards count as due "today"
+      const d = new Date(effective);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      forecastMap.set(key, (forecastMap.get(key) ?? 0) + 1);
+    }
+    const forecast: ForecastDay[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(now + i * 24 * 60 * 60 * 1000);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      forecast.push({ date: key, count: forecastMap.get(key) ?? 0 });
+    }
+
     const payload: AnalyticsPayload = {
       dailyCounts,
       streakDays,
@@ -211,6 +245,7 @@ export async function GET() {
       topicStats,
       totalReviews,
       masteredCount,
+      forecast,
     };
 
     return NextResponse.json(payload);

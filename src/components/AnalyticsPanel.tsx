@@ -19,6 +19,11 @@ interface TopicStat {
   avgInterval: number;
 }
 
+interface ForecastDay {
+  date: string;
+  count: number;
+}
+
 interface AnalyticsData {
   dailyCounts: DailyCount[];
   streakDays: number;
@@ -27,6 +32,7 @@ interface AnalyticsData {
   topicStats: TopicStat[];
   totalReviews: number;
   masteredCount: number;
+  forecast: ForecastDay[];
 }
 
 function qualityColor(q: number): string {
@@ -82,6 +88,10 @@ export default function AnalyticsPanel() {
     : 1;
 
   const maxEf = data ? Math.max(1, ...data.efDistribution.map((b) => b.count)) : 1;
+
+  const maxForecast = data
+    ? Math.max(1, ...data.forecast.map((f) => f.count))
+    : 1;
 
   return (
     <div className="w-full bg-surface-card border border-surface-border rounded-2xl overflow-hidden">
@@ -189,6 +199,44 @@ export default function AnalyticsPanel() {
                   <span>{shortDate(data.dailyCounts[0].date)}</span>
                   <span>Today</span>
                 </div>
+              </section>
+
+              {/* ——— 7-day forward forecast ——— */}
+              <section>
+                <h3 className="text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wide">
+                  Upcoming Load (7 days)
+                </h3>
+                <div className="flex items-end gap-[3px] h-16">
+                  {data.forecast.map((f, i) => {
+                    const pct = (f.count / maxForecast) * 100;
+                    const isToday = i === 0;
+                    return (
+                      <div
+                        key={f.date}
+                        className="flex-1 flex flex-col items-center justify-end gap-0.5"
+                        title={`${shortDate(f.date)}: ${f.count} card${f.count !== 1 ? "s" : ""} due`}
+                      >
+                        <div
+                          className={`w-full rounded-sm transition-all duration-300 ${
+                            f.count === 0
+                              ? "bg-surface-border"
+                              : isToday
+                              ? "bg-orange-400"
+                              : "bg-orange-400/50"
+                          }`}
+                          style={{ height: `${Math.max(4, pct)}%` }}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="flex justify-between text-xs text-slate-600 mt-1">
+                  <span>Today</span>
+                  <span>{shortDate(data.forecast[data.forecast.length - 1].date)}</span>
+                </div>
+                <p className="text-xs text-slate-600 mt-1.5">
+                  Cards becoming due each day (overdue cards count toward today). Plan study time around spikes.
+                </p>
               </section>
 
               {/* ——— EF distribution ——— */}

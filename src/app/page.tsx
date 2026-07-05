@@ -6,6 +6,7 @@ import AnalyticsPanel from "@/components/AnalyticsPanel";
 import CardBody, { countHintSteps } from "@/components/CardBody";
 import DeckBadge from "@/components/DeckBadge";
 import GradeButtons from "@/components/GradeButtons";
+import LeechPanel from "@/components/LeechPanel";
 import PeerPanel from "@/components/PeerPanel";
 import ProgressBar from "@/components/ProgressBar";
 import Timer from "@/components/Timer";
@@ -522,6 +523,9 @@ export default function DrillPage() {
               </button>
             </div>
           )}
+
+          {/* ——— Leeches (hidden while browsing history) ——— */}
+          {!isBrowsingHistory && <LeechPanel />}
 
           {/* ——— Weak spots (hidden while browsing history) ——— */}
           {!isBrowsingHistory && <WeakSpotsPanel />}

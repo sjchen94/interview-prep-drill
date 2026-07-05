@@ -286,3 +286,111 @@ export function recordReview(
   });
   return Number(info.lastInsertRowid);
 }
+
+// A card becomes a "leech" once it has racked up this many total lapses
+// (quality < 3 grades) across its review history — mirrors Anki's leech
+// concept. These are cards that keep coming back despite repeated drilling,
+// which usually means passive re-reading isn't working and the user needs
+// to actively re-learn the material (re-read the solution, rewrite notes).
+export const LEECH_LAPSE_THRESHOLD = 4;
+// Also flag a card if its *current* consecutive-lapse streak (since the
+// last quality>=3 grade) reaches this — catches an actively-in-progress
+// leech even before it crosses the lifetime threshold.
+export const CONSECUTIVE_LAPSE_THRESHOLD = 3;
+
+export interface LeechReviewRow {
+  card_id: string;
+  quality: number;
+  deck: string;
+  title: string;
+  topic: string | null;
+  ef: number;
+  last_reviewed_at: number | null;
+}
+
+export interface LeechCard {
+  id: string;
+  deck: string;
+  title: string;
+  topic: string | null;
+  totalLapses: number;
+  consecutiveLapses: number;
+  reviewCount: number;
+  ef: number;
+  lastReviewedAt: number | null;
+}
+
+/**
+ * Pure aggregation: given every review row (joined with card/state info),
+ * ordered oldest-first per card, compute lifetime lapse counts and the
+ * current consecutive-lapse streak per card, then return the subset that
+ * crosses either leech threshold, worst offenders first.
+ *
+ * Rows MUST be ordered by (card_id, answered_at ASC) — the caller (the
+ * `/api/drill/leeches` route) enforces this via `ORDER BY r.card_id,
+ * r.answered_at ASC` in its SQL query.
+ */
+export function computeLeeches(rows: LeechReviewRow[]): LeechCard[] {
+  const byCard = new Map<
+    string,
+    {
+      deck: string;
+      title: string;
+      topic: string | null;
+      ef: number;
+      lastReviewedAt: number | null;
+      totalLapses: number;
+      consecutiveLapses: number;
+      reviewCount: number;
+    }
+  >();
+
+  for (const row of rows) {
+    const entry =
+      byCard.get(row.card_id) ??
+      {
+        deck: row.deck,
+        title: row.title,
+        topic: row.topic,
+        ef: row.ef,
+        lastReviewedAt: row.last_reviewed_at,
+        totalLapses: 0,
+        consecutiveLapses: 0,
+        reviewCount: 0,
+      };
+
+    entry.reviewCount += 1;
+    if (row.quality < 3) {
+      entry.totalLapses += 1;
+      entry.consecutiveLapses += 1;
+    } else {
+      entry.consecutiveLapses = 0;
+    }
+    byCard.set(row.card_id, entry);
+  }
+
+  return Array.from(byCard.entries())
+    .filter(
+      ([, v]) =>
+        v.totalLapses >= LEECH_LAPSE_THRESHOLD ||
+        v.consecutiveLapses >= CONSECUTIVE_LAPSE_THRESHOLD,
+    )
+    .map(([id, v]) => ({
+      id,
+      deck: v.deck,
+      title: v.title,
+      topic: v.topic,
+      totalLapses: v.totalLapses,
+      consecutiveLapses: v.consecutiveLapses,
+      reviewCount: v.reviewCount,
+      ef: v.ef,
+      lastReviewedAt: v.lastReviewedAt,
+    }))
+    // Worst offenders first: consecutive streak, then lifetime lapses, then lowest EF
+    .sort((a, b) =>
+      b.consecutiveLapses - a.consecutiveLapses ||
+      b.totalLapses - a.totalLapses ||
+      a.ef - b.ef,
+    )
+    .slice(0, 10);
+}

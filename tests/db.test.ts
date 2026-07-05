@@ -5,12 +5,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   closeDb,
+  computeLeeches,
   ensureCardState,
   getCardState,
   openDb,
   recordReview,
   upsertCard,
   writeCardState,
+  type LeechReviewRow,
 } from '../lib/db.js';
 import { initialState, review } from '../lib/sm2.js';
 
@@ -121,5 +123,93 @@ describe('db schema and ingest', () => {
       .all(id) as Array<{ card_id: string; quality: number; response_md: string }>;
     expect(reviews).toHaveLength(1);
     expect(reviews[0]!.quality).toBe(4);
+  });
+});
+
+describe('computeLeeches', () => {
+  function row(
+    card_id: string,
+    quality: number,
+    overrides: Partial<LeechReviewRow> = {},
+  ): LeechReviewRow {
+    return {
+      card_id,
+      quality,
+      deck: 'blind75',
+      title: `Title for ${card_id}`,
+      topic: 'arrays',
+      ef: 1.8,
+      last_reviewed_at: 1_700_000_000_000,
+      ...overrides,
+    };
+  }
+
+  it('flags a card once lifetime lapses reach the threshold, even if not consecutive', () => {
+    // 4 lapses (q<3) interspersed with a couple of good grades — no live streak of 3.
+    const rows: LeechReviewRow[] = [
+      row('leech-1', 1),
+      row('leech-1', 4),
+      row('leech-1', 2),
+      row('leech-1', 4),
+      row('leech-1', 0),
+      row('leech-1', 1),
+    ];
+    const leeches = computeLeeches(rows);
+    expect(leeches).toHaveLength(1);
+    expect(leeches[0]!.id).toBe('leech-1');
+    expect(leeches[0]!.totalLapses).toBe(4);
+    expect(leeches[0]!.consecutiveLapses).toBe(2); // last two reviews were lapses
+  });
+
+  it('flags a card on a live 3-lapse streak even below the lifetime threshold', () => {
+    const rows: LeechReviewRow[] = [
+      row('leech-2', 4),
+      row('leech-2', 1),
+      row('leech-2', 2),
+      row('leech-2', 0),
+    ];
+    const leeches = computeLeeches(rows);
+    expect(leeches).toHaveLength(1);
+    expect(leeches[0]!.totalLapses).toBe(3);
+    expect(leeches[0]!.consecutiveLapses).toBe(3);
+  });
+
+  it('does not flag a healthy card with only occasional lapses', () => {
+    const rows: LeechReviewRow[] = [
+      row('healthy-1', 4),
+      row('healthy-1', 1),
+      row('healthy-1', 4),
+      row('healthy-1', 5),
+    ];
+    expect(computeLeeches(rows)).toHaveLength(0);
+  });
+
+  it('resets the consecutive streak after a passing grade', () => {
+    const rows: LeechReviewRow[] = [
+      row('recovered-1', 1),
+      row('recovered-1', 2),
+      row('recovered-1', 3), // streak resets here
+      row('recovered-1', 1),
+    ];
+    const leeches = computeLeeches(rows);
+    // 3 total lapses, but consecutive streak is only 1 (the last review) — below both thresholds
+    expect(leeches).toHaveLength(0);
+  });
+
+  it('sorts worst offenders first (consecutive, then total lapses, then EF)', () => {
+    const rows: LeechReviewRow[] = [
+      // card A: 3 consecutive lapses (meets consecutive threshold)
+      row('a', 1, { ef: 1.5 }),
+      row('a', 2, { ef: 1.5 }),
+      row('a', 0, { ef: 1.5 }),
+      // card B: 4 lifetime lapses but currently on a passing grade (consecutive=0)
+      row('b', 1, { ef: 1.3 }),
+      row('b', 1, { ef: 1.3 }),
+      row('b', 1, { ef: 1.3 }),
+      row('b', 1, { ef: 1.3 }),
+      row('b', 5, { ef: 1.3 }),
+    ];
+    const leeches = computeLeeches(rows);
+    expect(leeches.map((l) => l.id)).toEqual(['a', 'b']);
   });
 });
