@@ -70,6 +70,37 @@ const DECK_LABELS: Record<DeckFilter, string> = {
   "ml-infra": "ML Infra",
 };
 
+const VALID_DECK_FILTERS = new Set<DeckFilter>([
+  "all",
+  "blind75",
+  "sysdesign",
+  "behavioral",
+  "ml-infra",
+]);
+
+/**
+ * Read initial deck/topic/focus filters from the URL query string so links
+ * like "?deck=behavioral&topic=trees" from WeakSpotsPanel/LeechPanel actually
+ * land on a filtered queue instead of silently opening the unfiltered deck.
+ * Safe to call during render (client component) — falls back to defaults
+ * during SSR/when window is unavailable.
+ */
+function readInitialFiltersFromUrl(): {
+  deck: DeckFilter;
+  topic: string | null;
+  focusHard: boolean;
+} {
+  if (typeof window === "undefined") {
+    return { deck: "all", topic: null, focusHard: false };
+  }
+  const params = new URLSearchParams(window.location.search);
+  const rawDeck = params.get("deck") ?? "all";
+  const deck = VALID_DECK_FILTERS.has(rawDeck as DeckFilter) ? (rawDeck as DeckFilter) : "all";
+  const topic = params.get("topic");
+  const focusHard = params.get("focus") === "hard";
+  return { deck, topic: topic && topic.trim() ? topic.trim() : null, focusHard };
+}
+
 export default function DrillPage() {
   const [drillState, setDrillState] = useState<DrillState | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -92,13 +123,18 @@ export default function DrillPage() {
   // True when the countdown expired and auto-revealed this card
   const [timedOut, setTimedOut] = useState(false);
 
-  // Deck filter
-  const [deckFilter, setDeckFilter] = useState<DeckFilter>("all");
-  const deckFilterRef = useRef<DeckFilter>("all");
+  // Deck + topic filter — initialized from the URL (?deck=&topic=) so
+  // "Drill" shortcuts from WeakSpotsPanel/LeechPanel actually filter the
+  // queue instead of landing on the unfiltered "all" view.
+  const initialFilters = useRef(readInitialFiltersFromUrl()).current;
+  const [deckFilter, setDeckFilter] = useState<DeckFilter>(initialFilters.deck);
+  const deckFilterRef = useRef<DeckFilter>(initialFilters.deck);
+  const [topicFilter, setTopicFilter] = useState<string | null>(initialFilters.topic);
+  const topicFilterRef = useRef<string | null>(initialFilters.topic);
 
   // Focus mode: hard-first queues lowest-EF due cards first
-  const [focusHard, setFocusHard] = useState(false);
-  const focusHardRef = useRef(false);
+  const [focusHard, setFocusHard] = useState(initialFilters.focusHard);
+  const focusHardRef = useRef(initialFilters.focusHard);
 
   // Interleave mode: round-robin due cards by topic to avoid consecutive same-topic cards
   const [interleave, setInterleave] = useState(false);
@@ -150,10 +186,12 @@ export default function DrillPage() {
     setHintStep(0);
 
     const deck = deckFilterRef.current;
+    const topic = topicFilterRef.current;
     const focus = focusHardRef.current;
     const interleaveOn = interleaveRef.current;
     const params = new URLSearchParams();
     if (deck !== "all") params.set("deck", deck);
+    if (topic) params.set("topic", topic);
     if (focus) params.set("focus", "hard");
     if (interleaveOn) params.set("strategy", "interleave");
     const deckParam = params.toString() ? `?${params.toString()}` : "";
@@ -187,9 +225,11 @@ export default function DrillPage() {
     }
   }, []);
 
-  // Fetch on mount and whenever deck, focus mode, or interleave mode changes (resets session history)
+  // Fetch on mount and whenever deck, topic, focus mode, or interleave mode
+  // changes (resets session history)
   useEffect(() => {
     deckFilterRef.current = deckFilter;
+    topicFilterRef.current = topicFilter;
     focusHardRef.current = focusHard;
     interleaveRef.current = interleave;
     sessionCardsRef.current = [];
@@ -197,7 +237,7 @@ export default function DrillPage() {
     setHistoryPos(-1);
     setSessionGrades([]);
     fetchNext();
-  }, [deckFilter, focusHard, interleave, fetchNext]);
+  }, [deckFilter, topicFilter, focusHard, interleave, fetchNext]);
 
   // Number of progressive hint steps available for the active card (0 = none).
   const activeHintSteps = drillState?.card ? countHintSteps(drillState.card.body_md) : 0;
@@ -424,7 +464,12 @@ export default function DrillPage() {
               return (
                 <button
                   key={d}
-                  onClick={() => setDeckFilter(d)}
+                  onClick={() => {
+                    setDeckFilter(d);
+                    // Switching decks manually clears any topic scope from a
+                    // "Drill" deep link — topic is a narrower filter than deck.
+                    setTopicFilter(null);
+                  }}
                   className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
                     active
                       ? "bg-brand text-white"
@@ -449,6 +494,23 @@ export default function DrillPage() {
               );
             })}
           </div>
+
+          {/* ——— Active topic filter chip (from a weak-spot/leech "Drill" deep link) ——— */}
+          {topicFilter && (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-slate-500">Topic filter:</span>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-brand/20 text-brand-light border border-brand/40">
+                {topicFilter}
+                <button
+                  onClick={() => setTopicFilter(null)}
+                  aria-label="Clear topic filter"
+                  className="hover:text-white"
+                >
+                  ✕
+                </button>
+              </span>
+            </div>
+          )}
 
           {/* ——— Timed Mode + Focus Mode toggles ——— */}
           <div className="flex items-center justify-between gap-3 flex-wrap">

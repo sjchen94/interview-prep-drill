@@ -65,11 +65,13 @@ export default function WeakSpotsPanel() {
       <ul className="space-y-2.5">
         {data.weakSpots.map((spot) => {
           const bar = qualityBar(spot.avgQuality);
-          // Build a drill URL: filter by deck (deepest filter we have without topic routing)
-          const drillHref =
-            spot.deck === "blind75" || spot.deck === "sysdesign"
-              ? `/?deck=${spot.deck}`
-              : "/";
+          // Build a drill URL filtered to this deck, and to the specific
+          // topic when we have one — the drill page reads both params on
+          // load (see readInitialFiltersFromUrl in src/app/page.tsx).
+          const params = new URLSearchParams();
+          params.set("deck", spot.deck);
+          if (spot.topic) params.set("topic", spot.topic);
+          const drillHref = `/?${params.toString()}`;
           return (
             <li key={`${spot.deck}::${spot.topic ?? "all"}`} className="space-y-1">
               <div className="flex items-center justify-between text-xs gap-2">

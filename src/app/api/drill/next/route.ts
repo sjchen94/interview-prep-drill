@@ -54,6 +54,11 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const rawDeck = searchParams.get("deck") ?? "all";
     const deck = VALID_DECKS.has(rawDeck) ? rawDeck : null; // null = all decks
+    // topic: narrow further to a specific topic tag (e.g. "trees", "caching").
+    // Used by the weak-spots/leech "Drill" shortcuts to jump straight to the
+    // problem area instead of just filtering by deck.
+    const rawTopic = searchParams.get("topic");
+    const topic = rawTopic && rawTopic.trim() ? rawTopic.trim() : null;
     // focus=hard: sort by ef ASC (hardest/lowest EF first) instead of due_at ASC
     const focusHard = searchParams.get("focus") === "hard";
     // strategy=interleave: round-robin due cards by topic to avoid consecutive same-topic cards
@@ -62,22 +67,29 @@ export async function GET(request: Request) {
     const db = openDb();
     const now = Date.now();
     const deckClause = deck ? "AND c.deck = ?" : "";
-    const withDeck = <T>(base: T[]) => (deck ? ([...base, deck] as [...T[], string]) : base);
+    const topicClause = topic ? "AND c.topic = ?" : "";
+    const filterClause = `${deckClause} ${topicClause}`;
+    const withFilters = <T>(base: T[]) => {
+      const withDeck = deck ? ([...base, deck] as T[]) : base;
+      return (topic ? ([...withDeck, topic] as T[]) : withDeck) as [...T[], string];
+    };
 
     const countDue = () =>
       (
         db
           .prepare(
-            `SELECT COUNT(*) as n FROM card_state cs JOIN cards c ON c.id = cs.card_id WHERE cs.due_at <= ? ${deckClause}`,
+            `SELECT COUNT(*) as n FROM card_state cs JOIN cards c ON c.id = cs.card_id WHERE cs.due_at <= ? ${filterClause}`,
           )
-          .get(...withDeck([now])) as { n: number }
+          .get(...withFilters([now])) as { n: number }
       ).n;
 
     const countTotal = () =>
       (
         db
-          .prepare(`SELECT COUNT(*) as n FROM cards${deck ? " WHERE deck = ?" : ""}`)
-          .get(...(deck ? [deck] : [])) as { n: number }
+          .prepare(
+            `SELECT COUNT(*) as n FROM cards c WHERE 1=1 ${filterClause}`,
+          )
+          .get(...withFilters([])) as { n: number }
       ).n;
 
     // Skip audit in focus-hard mode — we want deliberate practice, not random mastery checks
@@ -88,7 +100,7 @@ export async function GET(request: Request) {
                   cs.ef, cs.interval, cs.reps, cs.due_at, cs.last_reviewed_at
            FROM cards c
            JOIN card_state cs ON cs.card_id = c.id
-           WHERE cs.due_at > ? ${deckClause}
+           WHERE cs.due_at > ? ${filterClause}
              AND (
                SELECT COUNT(*) FROM reviews r
                WHERE r.card_id = c.id AND r.quality = 5
@@ -96,7 +108,7 @@ export async function GET(request: Request) {
            ORDER BY RANDOM()
            LIMIT 1`,
         )
-        .get(...withDeck([now]), MASTERED_EASY_THRESHOLD) as CardRow | undefined;
+        .get(...withFilters([now]), MASTERED_EASY_THRESHOLD) as CardRow | undefined;
 
       if (masteredRow) {
         return NextResponse.json({
@@ -122,11 +134,11 @@ export async function GET(request: Request) {
                   cs.ef, cs.interval, cs.reps, cs.due_at, cs.last_reviewed_at
            FROM cards c
            JOIN card_state cs ON cs.card_id = c.id
-           WHERE cs.due_at <= ? ${deckClause}
+           WHERE cs.due_at <= ? ${filterClause}
            ORDER BY ${orderClause}
            LIMIT 10`,
         )
-        .all(...withDeck([now])) as CardRow[];
+        .all(...withFilters([now])) as CardRow[];
       row = interleaveByTopic(dueRows)[0];
     } else {
       row = db
@@ -135,11 +147,11 @@ export async function GET(request: Request) {
                   cs.ef, cs.interval, cs.reps, cs.due_at, cs.last_reviewed_at
            FROM cards c
            JOIN card_state cs ON cs.card_id = c.id
-           WHERE cs.due_at <= ? ${deckClause}
+           WHERE cs.due_at <= ? ${filterClause}
            ORDER BY ${orderClause}
            LIMIT 1`,
         )
-        .get(...withDeck([now])) as CardRow | undefined;
+        .get(...withFilters([now])) as CardRow | undefined;
     }
 
     if (!row) {
@@ -150,11 +162,11 @@ export async function GET(request: Request) {
                   cs.ef, cs.interval, cs.reps, cs.due_at, cs.last_reviewed_at
            FROM cards c
            JOIN card_state cs ON cs.card_id = c.id
-           ${deck ? "WHERE c.deck = ?" : ""}
+           WHERE 1=1 ${filterClause}
            ORDER BY cs.due_at ASC
            LIMIT 1`,
         )
-        .get(...(deck ? [deck] : [])) as CardRow | undefined;
+        .get(...withFilters([])) as CardRow | undefined;
 
       if (!next) {
         return NextResponse.json({ card: null, dueCount: 0, totalCards: 0 });
