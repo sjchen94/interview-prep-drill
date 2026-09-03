@@ -303,6 +303,20 @@ export default function AnalyticsPanel() {
                   </p>
                 </section>
               )}
+
+              {/* ——— Export ——— */}
+              <section className="pt-1 border-t border-surface-border">
+                <a
+                  href="/api/export"
+                  download
+                  className="
+                    inline-flex items-center gap-1.5 text-xs text-slate-500
+                    hover:text-slate-200 transition-colors mt-3
+                  "
+                >
+                  <span aria-hidden="true">⬇</span> Export data (JSON)
+                </a>
+              </section>
             </>
           )}
         </div>

@@ -111,6 +111,15 @@ export default function DrillPage() {
   const [submitting, setSubmitting] = useState(false);
   const [, setLastGrade] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  // Undo support: snapshot of the review + prior SM-2 state returned by the
+  // grade endpoint, so a misclick can be reverted before moving to the next
+  // card. Cleared whenever a new card loads.
+  const [undoInfo, setUndoInfo] = useState<{
+    reviewId: number;
+    cardId: string;
+    prevState: { ef: number; interval: number; reps: number; due_at: number; last_reviewed_at: number | null };
+  } | null>(null);
+  const [undoing, setUndoing] = useState(false);
   // Response textarea — user types their answer; passed to AI grader
   const [responseMd, setResponseMd] = useState<string>("");
 
@@ -184,6 +193,7 @@ export default function DrillPage() {
     setTimerResetKey((k) => k + 1);
     setTimedOut(false);
     setHintStep(0);
+    setUndoInfo(null);
 
     const deck = deckFilterRef.current;
     const topic = topicFilterRef.current;
@@ -286,7 +296,9 @@ export default function DrillPage() {
         }),
       });
       const data = (await res.json()) as {
+        reviewId?: number;
         nextState?: { interval: number };
+        prevState?: { ef: number; interval: number; reps: number; due_at: number; last_reviewed_at: number | null };
         error?: string;
       };
       if (data.error) {
@@ -296,6 +308,13 @@ export default function DrillPage() {
         setFeedback(
           `Graded "${label}". Next review in ${days} day${days === 1 ? "" : "s"}.`,
         );
+        if (data.reviewId && data.prevState) {
+          setUndoInfo({
+            reviewId: data.reviewId,
+            cardId: drillState.card.id,
+            prevState: data.prevState,
+          });
+        }
       }
     } catch {
       setFeedback("Failed to submit grade. Check your connection.");
@@ -305,6 +324,39 @@ export default function DrillPage() {
   };
   // Keep ref current
   handleGradeRef.current = handleGrade;
+
+  // Reverts the grade just submitted (before "Next Card" is pressed): drops
+  // the review row server-side, restores the prior SM-2 state, pops the
+  // grade off the session summary, and drops back into the answer phase so
+  // the user can re-grade.
+  const handleUndo = async () => {
+    if (!undoInfo || undoing) return;
+    setUndoing(true);
+    try {
+      const res = await fetch("/api/drill/undo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          card_id: undoInfo.cardId,
+          review_id: undoInfo.reviewId,
+          prev_state: undoInfo.prevState,
+        }),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (data.ok) {
+        setSessionGrades((prev) => prev.slice(0, -1));
+        setUndoInfo(null);
+        setFeedback(null);
+        setPhase("answer");
+      } else {
+        setFeedback(`Undo failed: ${data.error ?? "unknown error"}`);
+      }
+    } catch (e) {
+      setFeedback(`Undo failed: ${e instanceof Error ? e.message : "network error"}`);
+    } finally {
+      setUndoing(false);
+    }
+  };
 
   const handleNext = () => fetchNext();
   // Keep ref current
@@ -826,6 +878,20 @@ export default function DrillPage() {
                       Next Card →
                     </button>
                   </div>
+                  {undoInfo && (
+                    <button
+                      onClick={handleUndo}
+                      disabled={undoing}
+                      className="
+                        w-full min-h-[36px] rounded-lg
+                        text-xs text-slate-500 hover:text-slate-200
+                        border border-transparent hover:border-surface-border
+                        transition-colors disabled:opacity-40
+                      "
+                    >
+                      {undoing ? "Undoing…" : "Misgraded? Undo"}
+                    </button>
+                  )}
                 </div>
               )}
 

@@ -6,8 +6,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   closeDb,
   computeLeeches,
+  deleteReview,
   ensureCardState,
   getCardState,
+  isLatestReview,
   openDb,
   recordReview,
   upsertCard,
@@ -123,6 +125,37 @@ describe('db schema and ingest', () => {
       .all(id) as Array<{ card_id: string; quality: number; response_md: string }>;
     expect(reviews).toHaveLength(1);
     expect(reviews[0]!.quality).toBe(4);
+  });
+
+  it('isLatestReview/deleteReview support undoing the most recent grade only', () => {
+    const db = openDb(dbPath);
+    const id = 'blind75/undo-me';
+    upsertCard(db, {
+      id,
+      deck: 'blind75',
+      source_path: 'problems/undo-me.md',
+      title: 'Undo Me',
+      body_md: '...',
+    });
+    const now = 1_700_000_000_000;
+    ensureCardState(db, id, now);
+
+    const first = recordReview(db, { card_id: id, quality: 1, answered_at: now });
+    const second = recordReview(db, { card_id: id, quality: 4, answered_at: now + 1000 });
+
+    // The stale (first) review is no longer the latest — must not be undoable.
+    expect(isLatestReview(db, id, first)).toBe(false);
+    // The most recent review is undoable.
+    expect(isLatestReview(db, id, second)).toBe(true);
+
+    deleteReview(db, second);
+    const remaining = db
+      .prepare(`SELECT id FROM reviews WHERE card_id = ?`)
+      .all(id) as Array<{ id: number }>;
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]!.id).toBe(first);
+    // After deleting the second review, the first is once again the latest.
+    expect(isLatestReview(db, id, first)).toBe(true);
   });
 });
 

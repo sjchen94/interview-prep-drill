@@ -58,6 +58,16 @@ export async function POST(req: NextRequest) {
         reps: nextState.reps,
         due_at: nextState.due_at_ms,
       },
+      // Snapshot of the state *before* this grade was applied — the client
+      // hangs onto this so it can call /api/drill/undo to revert a misclick
+      // without having to recompute SM-2 in reverse.
+      prevState: {
+        ef: existing.ef,
+        interval: existing.interval,
+        reps: existing.reps,
+        due_at: existing.due_at,
+        last_reviewed_at: existing.last_reviewed_at,
+      },
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

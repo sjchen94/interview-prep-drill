@@ -287,6 +287,30 @@ export function recordReview(
   return Number(info.lastInsertRowid);
 }
 
+/**
+ * Returns true if reviewId is the most recent review recorded for cardId
+ * (highest id). Used to guard "undo last grade" so a stale/out-of-order
+ * undo request can never clobber a newer review.
+ */
+export function isLatestReview(
+  db: Database.Database,
+  cardId: string,
+  reviewId: number,
+): boolean {
+  const row = db
+    .prepare(`SELECT id FROM reviews WHERE card_id = ? ORDER BY id DESC LIMIT 1`)
+    .get(cardId) as { id: number } | undefined;
+  return !!row && row.id === reviewId;
+}
+
+/**
+ * Deletes a single review row by id. Caller is responsible for verifying
+ * (e.g. via isLatestReview) that this is safe to remove.
+ */
+export function deleteReview(db: Database.Database, reviewId: number): void {
+  db.prepare(`DELETE FROM reviews WHERE id = ?`).run(reviewId);
+}
+
 // A card becomes a "leech" once it has racked up this many total lapses
 // (quality < 3 grades) across its review history — mirrors Anki's leech
 // concept. These are cards that keep coming back despite repeated drilling,
