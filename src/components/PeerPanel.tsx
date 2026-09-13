@@ -75,7 +75,7 @@ export default function PeerPanel({ cardTitle, cardBody }: PeerPanelProps) {
   const [input, setInput] = useState("");
   const [typing, setTyping] = useState(false);
   const [persona, setPersona] = useState<Persona>("supportive");
-  const [showPersonaPicker, setShowPersonaPicker] = useState(false);
+  const [, setShowPersonaPicker] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const currentPersona = PERSONAS.find((p) => p.value === persona)!;

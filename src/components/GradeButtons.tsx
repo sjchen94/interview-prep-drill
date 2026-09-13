@@ -50,12 +50,23 @@ function qualityToGrade(q: number): Grade {
   return GRADES[3]!;             // Easy
 }
 
+interface StarFeedback {
+  situation: boolean;
+  task: boolean;
+  action: boolean;
+  result: boolean;
+}
+
 interface GradeButtonsProps {
   onGrade: (quality: number, label: string) => void;
   disabled?: boolean;
   /** Card id + response text for AI grading (both required to show the button). */
   cardId?: string;
   responseMd?: string;
+  /** Whether this is a behavioral card (enables STAR feedback display). */
+  isBehavioral?: boolean;
+  /** Number of graduated-disclosure hints used before answering (caps AI grade at Good if >= 2). */
+  hintsUsed?: number;
 }
 
 export default function GradeButtons({
@@ -63,12 +74,16 @@ export default function GradeButtons({
   disabled,
   cardId,
   responseMd,
+  isBehavioral,
+  hintsUsed = 0,
 }: GradeButtonsProps) {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState<{
     quality: number;
     gaps: string[];
     suggested: Grade;
+    starFeedback?: StarFeedback | null;
+    hintCapped?: boolean;
   } | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
 
@@ -84,11 +99,13 @@ export default function GradeButtons({
       const res = await fetch("/api/drill/ai-grade", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ card_id: cardId, response_md: responseMd }),
+        body: JSON.stringify({ card_id: cardId, response_md: responseMd, hints_used: hintsUsed }),
       });
       const data = (await res.json()) as {
         quality?: number;
         gaps?: string[];
+        starFeedback?: StarFeedback | null;
+        hintCapped?: boolean;
         error?: string;
       };
       if (data.error || data.quality === undefined) {
@@ -99,6 +116,8 @@ export default function GradeButtons({
           quality: data.quality,
           gaps: data.gaps ?? [],
           suggested,
+          starFeedback: data.starFeedback ?? null,
+          hintCapped: data.hintCapped ?? false,
         });
       }
     } catch (e) {
@@ -154,6 +173,11 @@ export default function GradeButtons({
               <span className="ml-1 text-slate-500 font-normal">
                 ({aiResult.quality}/5)
               </span>
+              {aiResult.hintCapped && (
+                <span className="ml-1.5 text-xs text-slate-500 font-normal italic">
+                  (capped — hints used)
+                </span>
+              )}
             </span>
             <button
               onClick={() => onGrade(aiResult.suggested.quality, aiResult.suggested.label)}
@@ -167,6 +191,28 @@ export default function GradeButtons({
               Accept
             </button>
           </div>
+
+          {/* STAR component checklist — only shown for behavioral cards */}
+          {isBehavioral && aiResult.starFeedback && (
+            <div className="flex gap-2 flex-wrap">
+              {(["situation", "task", "action", "result"] as const).map((part) => {
+                const present = aiResult.starFeedback![part];
+                return (
+                  <span
+                    key={part}
+                    className={`text-xs px-2 py-0.5 rounded-full border font-medium capitalize ${
+                      present
+                        ? "border-grade-good/50 bg-grade-good/10 text-grade-good"
+                        : "border-grade-again/50 bg-grade-again/10 text-grade-again"
+                    }`}
+                  >
+                    {present ? "✓" : "✗"} {part}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+
           {aiResult.gaps.length > 0 && (
             <ul className="space-y-0.5">
               {aiResult.gaps.map((gap, i) => (

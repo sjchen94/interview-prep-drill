@@ -8,9 +8,10 @@ export async function POST(req: NextRequest) {
       card_id: string;
       quality: number;
       response_md?: string;
+      hints_used?: number;
     };
 
-    const { card_id, quality, response_md } = body;
+    const { card_id, quality, response_md, hints_used } = body;
 
     if (!card_id || quality === undefined) {
       return NextResponse.json(
@@ -46,6 +47,7 @@ export async function POST(req: NextRequest) {
       card_id,
       quality,
       response_md: response_md ?? null,
+      hints_used: typeof hints_used === "number" ? hints_used : 0,
     });
 
     return NextResponse.json({
@@ -55,6 +57,16 @@ export async function POST(req: NextRequest) {
         interval: nextState.interval,
         reps: nextState.reps,
         due_at: nextState.due_at_ms,
+      },
+      // Snapshot of the state *before* this grade was applied — the client
+      // hangs onto this so it can call /api/drill/undo to revert a misclick
+      // without having to recompute SM-2 in reverse.
+      prevState: {
+        ef: existing.ef,
+        interval: existing.interval,
+        reps: existing.reps,
+        due_at: existing.due_at,
+        last_reviewed_at: existing.last_reviewed_at,
       },
     });
   } catch (err) {
