@@ -10,6 +10,7 @@ import LeechPanel from "@/components/LeechPanel";
 import PeerPanel from "@/components/PeerPanel";
 import ProgressBar from "@/components/ProgressBar";
 import Timer from "@/components/Timer";
+import VariantPanel from "@/components/VariantPanel";
 import WeakSpotsPanel from "@/components/WeakSpotsPanel";
 
 // Grade label → quality mapping (mirrors GradeButtons)
@@ -149,6 +150,18 @@ export default function DrillPage() {
   const [interleave, setInterleave] = useState(false);
   const interleaveRef = useRef(false);
 
+  // Adversarial variant mode (opt-in): when on, exposes a "Variant" panel on
+  // each card that generates a mutated version of the problem (swapped
+  // constraints / novel domain / extra invariant) via the LLM. Grading stays
+  // on the underlying card, so the SM-2 scheduler is untouched.
+  const [variantMode, setVariantMode] = useState(false);
+  // Auto-load a variant for every new card (rather than requiring a click)
+  const [autoVariant, setAutoVariant] = useState(false);
+  // Bumped on each new card so VariantPanel knows to auto-fetch when
+  // autoVariant is on. Uses card id + counter so re-fetching the same card
+  // still triggers a fresh variant.
+  const [variantAutoKey, setVariantAutoKey] = useState(0);
+
   // Session history for prev/next navigation
   const sessionCardsRef = useRef<Card[]>([]);
   const [historyPos, setHistoryPos] = useState(-1);
@@ -221,6 +234,9 @@ export default function DrillPage() {
         setPhase("question");
         setTimerRunning(true);
         appendToSession(drill.card);
+        // Trigger auto-fetch in VariantPanel if the user has that mode on.
+        // Panel only reacts when key !== 0, so guarding here is fine.
+        setVariantAutoKey((k) => k + 1);
       }
     } catch (e) {
       setDrillState({
@@ -613,8 +629,42 @@ export default function DrillPage() {
                 <span aria-hidden="true">{interleave ? "◉" : "○"}</span>
                 Interleave
               </button>
+
+              {/* Variant mode toggle (adversarial mutations) */}
+              <button
+                onClick={() => {
+                  setVariantMode((v) => {
+                    if (v) setAutoVariant(false);
+                    return !v;
+                  });
+                }}
+                title={variantMode ? "Disable variant mode" : "Variant mode: LLM mutates each card to test recognition over memorization"}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                  variantMode
+                    ? "bg-brand/20 border-brand/60 text-brand-light"
+                    : "bg-surface-card border-surface-border text-slate-500 hover:text-slate-200"
+                }`}
+              >
+                <span aria-hidden="true">{variantMode ? "◉" : "○"}</span>
+                Variant
+              </button>
             </div>
           </div>
+
+          {/* ——— Auto-variant sub-toggle (only visible when Variant mode is on) ——— */}
+          {variantMode && (
+            <div className="flex items-center justify-end">
+              <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={autoVariant}
+                  onChange={(e) => setAutoVariant(e.target.checked)}
+                  className="accent-brand"
+                />
+                Auto-generate a variant on every new card
+              </label>
+            </div>
+          )}
 
           {/* ——— History navigation banner ——— */}
           {isBrowsingHistory && (
@@ -723,6 +773,13 @@ export default function DrillPage() {
                   revealed={phase === "answer" || phase === "grading"}
                   hintStep={hintStep}
                 />
+
+                {variantMode && (
+                  <VariantPanel
+                    cardId={activeCard.id}
+                    autoFetchKey={autoVariant ? variantAutoKey : 0}
+                  />
+                )}
 
                 {phase === "question" && (
                   <div className="space-y-1.5">
